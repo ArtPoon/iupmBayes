@@ -1,7 +1,6 @@
 # iupmBayes
 
-[iupmBayes](http://github.com/ArtPoon/iupmBayes) is a set of R scripts for estimating the number of infectious units per million (IUPM) from HIV sequence data obtained from a quantitative viral outgrowth assay (QVOA).  
-
+[iupmBayes](http://github.com/ArtPoon/iupmBayes) is a set of R scripts for estimating the number of infectious units per million (IUPM) from HIV sequence data obtained from a quantitative viral outgrowth assay (QVOA).  These scripts and data sets accompany a manuscript that has been submitted for peer review.
 
 
 ## Data
