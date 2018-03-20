@@ -26,10 +26,12 @@ bern <- function(well, rate, probs) {
 
 ll <- function(data, params) {
   # ll:  log-likelihood
-  # @arg data: S3 object containing:
-  #   wells: matrix of K binary vectors (rows) for presence/absence
-  #          of M variants
-  #   cells: vector of length K, the number of cells in the k-th well
+  # @arg data: a nested list containing:
+  #     region: genomic region sequenced
+  #       wells: list of K binary vectors (rows) for presence/absence
+  #              of M variants, indexed by well label
+  #       cells: vector of length K, the number of cells in the k-th well,
+  #              indexed by well label
   # @arg params: S3 object containing:
   #   iupm: IUPM
   #   probs: vector of probabilities of length M, representing the relative
@@ -37,13 +39,24 @@ ll <- function(data, params) {
   #          The first value is fixed to 1.  All other values can vary 
   #          from -Inf to Inf, and is transformed to a positive value by 
   #          exp() and rescaled so that all probs sum to 1.
-  p.vec <- c(1, params$probs)
-  p.vec <- p.vec/ sum(p.vec)
-  sum(sapply(1:nrow(data$wells), function(i) {
-    wells <- data$wells[i,]
-    cells <- data$cells[i]
-    log(bern(wells, params$iupm/1e6*cells, p.vec))
-  }))
+
+  res <- sapply(1:length(data), function(i) {
+    region <- names(data)[i]
+    rdat <- data[[region]]
+    
+    # unpack and normalize variant frequency vector
+    var.freq <- params$freqs[[region]]
+    var.freq <- var.freq / sum(var.freq)
+    
+    # for each well, apply Bernoulli distribution
+    sum(sapply(1:nrow(rdat$wells), function(j) {
+      wells <- rdat$wells[j,]
+      cells <- rdat$cells[j]
+      log(bern(wells, params$iupm/1e6*cells, var.freq))
+    }))
+  })
+  
+  sum(res)
 }
 
 
@@ -80,7 +93,8 @@ propose <- function(params, sd=0.1, delta=0.005) {
   # shift IUPM by small amount, reflecting at zero bound
   step <- rnorm(1, 0, sd)
   params$iupm <- abs(params$iupm + step)
-  # modify probability vector
+  
+  # modify probability vectors
   n.var <- length(params$probs)  # note first variant parameter is constrained to 1
   params$probs <- abs(params$probs + runif(n.var, -delta, delta))
   return(params)
@@ -131,10 +145,36 @@ mh <- function(data, params, hyper, max.steps, logfile=NA, skip.console=100, ski
 }
 
 
+mh2 <- function(data, iupm0, hyper, max.steps, logfile=NA, skip.console=100, skip.log=100, overwrite=FALSE) {
+  # handle multiple regions
+  res <- c()
+  m <- sapply(data, function(sub) ncol(sub$wells))  # number of variants
+  labels <- c('step', 'posterior', 'iupm')
+  
+  # initialize model parameters
+  params <- list(iupm=iupm0, freqs=list())
+  for (i in 1:length(m)) {
+    region <- names(m)[i]
+    nvar <- m[i]
+    params[["freqs"]][[region]] <- rep(1, nvar)
+    labels <- c(labels, paste(region, 1:nvar, sep='.'))
+  }
+  
+  # prepare output file
+  if (!is.na(logfile)) {
+    # prevent overwriting logfiles
+    if (file.exists(logfile) & !overwrite)
+      stop("To overwrite logfiles, set overwrite to TRUE.")
+    write(labels, ncolumns=length(labels), sep='\t', file=logfile)
+  }
+  
+  
+}
+
 run.example <- function() {
   # example
-  params <- list(iupm=1.0, probs=c(1,1))
-  hyper <- list(rate=1, shape=2, alpha=c(1,2,3))
+  params <- list(iupm=1.0, probs=c(1,1))  # initial values
+  hyper <- list(rate=1, shape=2, alpha=c(1,2,3))  # hyperparameters for priors
   
   data <- list(wells=matrix(c(1,0,0, 1,1,0, 1,0,1, 1,0,0), ncol=3, byrow=T), cells=rep(1e5, 4))
   
@@ -150,25 +190,42 @@ parse.data <- function(path, sep) {
   # @arg sep:   Delimiting character in tabular data
   # Return:  a list keyed by region, containing data lists
   data <- read.table(path, header=T, sep=sep, comment.char='')
+  data$Participant <- as.character(data$Participant)
   
-  result <- list()
-  by.region <- split(data, data$Region)
-  for (temp in by.region) {
-    region <- unique(temp$Region)
-    temp$Well.number <- as.character(temp$Well.number)
-    temp2 <- temp[order(temp$Well.number, temp$Variant), ]
+  result <- list()  # prepare output container
+  
+  by.subject <- split(data, data$Participant)
+  for (part in by.subject) {
+    participant <- unique(part$Participant)
+    result[[participant]] <- list()
     
-    wells <- split(temp2$Presence.of.Variant, temp2$Well.number)
-    #ells <- t(sapply(wells, unlist))  # convert into matrix
-    
-    cells <- lapply(split(temp2$Cells.plated, temp2$Well.number), unique)
-    cells <- unlist(cells)
-    
-    if (!setequal(names(wells), names(cells))) {
-      stop("Failed to parse well and cell data")
+    by.region <- split(part, as.character(part$Region))
+    for (temp in by.region) {
+      region <- as.character(unique(temp$Region))
+      
+      temp$Well.number <- as.character(temp$Well.number)
+      temp2 <- temp[order(temp$Well.number, temp$Variant), ]
+      
+      wells <- split(temp2$Presence.of.Variant, temp2$Well.number)
+      wells <- t(sapply(wells, unlist))  # convert into matrix
+      if (nrow(wells) == 1) {
+        wells <- t(wells)
+      }
+      
+      cells <- lapply(split(temp2$Cells.plated, temp2$Well.number), unique)
+      cells <- unlist(cells)
+      
+      if (!setequal(row.names(wells), names(cells))) {
+        print(wells)
+        print(cells)
+        stop("Failed to parse well and cell data")
+      }
+      
+      result[[participant]][[region]] <- list('wells'=wells, 'cells'=cells)
+      #eval(parse(text=paste("result$", region, "<-list('data'=list('wells'=wells, 'cells'=cells))")))
     }
-    eval(parse(text=paste("result$", region, "<-list('data'=list('wells'=wells, 'cells'=cells))")))
   }
+  
   return(result)
 }
 
