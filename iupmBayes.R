@@ -155,15 +155,16 @@ parse.data <- function(path, sep) {
   by.region <- split(data, data$Region)
   for (temp in by.region) {
     region <- unique(temp$Region)
-    temp2 <- temp[order(temp$Well.number, temp$Variant..), ]
+    temp$Well.number <- as.character(temp$Well.number)
+    temp2 <- temp[order(temp$Well.number, temp$Variant), ]
     
-    wells <- split(temp2$Presence.of.variant, temp2$Well.number)
-    wells <- t(sapply(wells, unlist))  # convert into matrix
+    wells <- split(temp2$Presence.of.Variant, temp2$Well.number)
+    #ells <- t(sapply(wells, unlist))  # convert into matrix
     
     cells <- lapply(split(temp2$Cells.plated, temp2$Well.number), unique)
     cells <- unlist(cells)
     
-    if (!all(row.names(wells) == names(cells))) {
+    if (!setequal(names(wells), names(cells))) {
       stop("Failed to parse well and cell data")
     }
     eval(parse(text=paste("result$", region, "<-list('data'=list('wells'=wells, 'cells'=cells))")))
