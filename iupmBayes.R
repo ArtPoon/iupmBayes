@@ -107,8 +107,12 @@ propose <- function(params, sd=0.1, delta=0.005) {
   params$iupm <- abs(params$iupm + step)
   
   # modify probability vectors
-  n.var <- length(params$probs)  # note first variant parameter is constrained to 1
-  params$probs <- abs(params$probs + runif(n.var, -delta, delta))
+  for (i in 1:length(params$freqs)) {
+    region <- names(params$freqs)[i]
+    n.var <- length(params$freqs[[region]])  # first variant is constrained to 1
+    params$freqs[[region]] <- abs(params$freqs[[region]] + 
+                                    runif(n.var, -delta, delta))
+  }
   return(params)
 }
 
