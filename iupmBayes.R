@@ -45,7 +45,7 @@ ll <- function(data, params) {
     rdat <- data[[region]]
     
     # unpack and normalize variant frequency vector
-    var.freq <- params$freqs[[region]]
+    var.freq <- c(1, params$freqs[[region]])
     var.freq <- var.freq / sum(var.freq)
     
     # for each well, apply Bernoulli distribution
@@ -81,11 +81,23 @@ lprior <- function(params, hyper, use.gamma=FALSE) {
   # @arg hyper: S3 object containing:
   #   shape: shape hyperparameter for gamma prior (shape=1 gives exponential)
   #   rate: rate hyperparameter for gamma prior
-  #   alpha: vector of length M, hyperparameters for Dirichlet prior
-  pv <- c(1, params$probs)
-  log(ddirichlet(pv/sum(pv), hyper$alpha)) + ifelse(use.gamma,
-      dgamma(params$iupm, shape=hyper$shape, rate=hyper$rate, log=T),
-      0)
+  #   alpha: a list of vectors of length M, hyperparameters for Dirichlet prior,
+  #          keyed by region name
+  res <- 0
+  if (use.gamma) {
+    dgamma(params$iupm, shape=hyper$shape, rate=hyper$rate, log=T)
+  }
+  
+  for (i in 1:length(params$freqs)) {
+    region <- names(params$freqs)[i]
+    pv <- c(1, params$freqs[region])
+    alpha <- hyper$alpha[[region]]
+    if (length(alpha) != length(pv)) {
+      stop(paste("Error: length of alpha hyperparameter != variant frequency vector for", region))
+    }
+    res <- res + log(ddirichlet(pv/sum(pv), alpha))
+  }
+  return(res)
 }
 
 
@@ -102,61 +114,33 @@ propose <- function(params, sd=0.1, delta=0.005) {
 
 
 
-# Metropolis-Hastings sampling
-mh <- function(data, params, hyper, max.steps, logfile=NA, skip.console=100, skip.log=100, overwrite=FALSE) {
-  res <- c()
-  m <- length(params$probs) + 1  # number of variants
-  
-  labels <- c('step', 'posterior', 'iupm', paste0('prob', 1:m))
-  if (!is.na(logfile)) {
-    # prevent overwriting logfiles
-    if (file.exists(logfile) & !overwrite)
-      stop("To overwrite logfiles, set overwrite to TRUE.")
-    write(labels, ncolumns=3+m, sep='\t', file=logfile)
-  }
-  
-  lpost <- ll(data, params) + lprior(params, hyper)
-  for (step in 0:max.steps) {
-    next.par <- propose(params)
-    next.lpost <- ll(data, next.par) + lprior(next.par, hyper)
-    ratio <- next.lpost - lpost
-    if (ratio >= 0 | runif(1) < exp(ratio)) {
-      lpost <- next.lpost
-      params <- next.par
-    }
-    
-    # logging
-    if (step %% skip.console == 0) {
-      cat(step, '\t', lpost, '\t', params$iupm, '\t', params$probs, '\n')
-    }
-    if (step %% skip.log == 0) {
-      pv <- c(1, params$probs)
-      pv <- pv/sum(pv)
-      row <- c(step, lpost, params$iupm, pv)
-      if (!is.na(logfile)) {
-        write(row, ncolumns=3+m, sep='\t', file=logfile, append=T)
-      }
-      res <- rbind(res, row)
-    }
-  }
-  res <- as.data.frame(res)
-  names(res) <- labels
-  return(res)
-}
-
-
-mh2 <- function(data, iupm0, hyper, max.steps, logfile=NA, skip.console=100, skip.log=100, overwrite=FALSE) {
-  # handle multiple regions
+mh <- function(data, iupm0, hyper, max.steps, logfile=NA, skip.console=100, 
+               skip.log=100, overwrite=FALSE) {
+  # Metropolis-Hastings sampling
+  #
+  # @param data: S3 object returned by parse.data()
+  # @param iupm0: initial IUPM value
+  # @param hyper: nested S3 object, see lprior() above
+  # @param max.steps:  number of iterations to run chain sample
+  # @param logfile:  path to write log
+  # @param skip.console:  number of iterations between print-outs
+  # @param skip.log:  number of iterations between chain samples to logfile
+  # @param overwrite:  if TRUE, replace contents of logfile
   res <- c()
   m <- sapply(data, function(sub) ncol(sub$wells))  # number of variants
   labels <- c('step', 'posterior', 'iupm')
   
   # initialize model parameters
   params <- list(iupm=iupm0, freqs=list())
+  regions <- c()
   for (i in 1:length(m)) {
     region <- names(m)[i]
+    regions <- c(regions, region)
     nvar <- m[i]
-    params[["freqs"]][[region]] <- rep(1, nvar)
+    
+    # we reduce the number of parameters by one because the frequency
+    # vector is constrained to sum to one
+    params[["freqs"]][[region]] <- rep(1, nvar-1)
     labels <- c(labels, paste(region, 1:nvar, sep='.'))
   }
   
@@ -168,7 +152,45 @@ mh2 <- function(data, iupm0, hyper, max.steps, logfile=NA, skip.console=100, ski
     write(labels, ncolumns=length(labels), sep='\t', file=logfile)
   }
   
+  # calculate initial posterior probability
+  lpost <- ll(data, params) + lprior(params, hyper)
   
+  for (step in 0:max.steps) {
+    next.par <- propose(params)
+    next.lpost <- ll(data, next.par) + lprior(next.par, hyper)
+    ratio <- next.lpost - lpost
+    if (ratio >= 0 | runif(1) < exp(ratio)) {
+      lpost <- next.lpost
+      params <- next.par
+    }
+    
+    # logging
+    if (step %% skip.console == 0) {
+      cat(step, '\t', lpost, '\t', params$iupm)
+      for (region in regions) {
+        cat('\t', params$freqs[[region]])
+      }
+      cat('\n')  # EOL
+    }
+    if (step %% skip.log == 0) {
+      row <- c(step, lpost, params$iupm)
+      
+      # conversion to probability vector
+      for (region in regions) {
+        pv <- c(1, params$freqs[[region]])
+        pv <- pv/sum(pv)
+        res <- c(res, pv)  # append to row
+      }
+      
+      if (!is.na(logfile)) {
+        write(row, ncolumns=length(row), sep='\t', file=logfile, append=T)
+      }
+      res <- rbind(res, row)
+    }
+  }
+  res <- as.data.frame(res)
+  names(res) <- labels
+  return(res)
 }
 
 run.example <- function() {
