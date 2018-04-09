@@ -11,7 +11,7 @@ bern <- function(well, rate, probs) {
   if (!is.vector(well) | any(well<0)) {
     stop("well argument must be a vector of non-negative values")
   }
-  if (!is.vector(probs) | any(probs<0)) {
+  if (any(probs<0)) {
     stop("probs argument must be a vector of non-negative values")
   }
   if (length(well) != length(probs)) {
@@ -37,8 +37,9 @@ ll <- function(data, params) {
   #          The first value is fixed to 1.  All other values can vary 
   #          from -Inf to Inf, and is transformed to a positive value by 
   #          exp() and rescaled so that all probs sum to 1.
-  p.vec <- c(1, params$probs)
-  p.vec <- p.vec/ sum(p.vec)
+  #p.vec <- c(1, params$probs)
+  #p.vec <- p.vec/ sum(p.vec)
+  p.vec <- params$probs
   sum(sapply(1:nrow(data$wells), function(i) {
     wells <- data$wells[i,]
     cells <- data$cells[i]
@@ -69,7 +70,8 @@ lprior <- function(params, hyper, use.gamma=FALSE) {
   #   shape: shape hyperparameter for gamma prior (shape=1 gives exponential)
   #   rate: rate hyperparameter for gamma prior
   #   alpha: vector of length M, hyperparameters for Dirichlet prior
-  pv <- c(1, params$probs)
+  #pv <- c(1, params$probs)
+  pv <- params$probs
   log(ddirichlet(pv/sum(pv), hyper$alpha)) + ifelse(use.gamma,
       dgamma(params$iupm, shape=hyper$shape, rate=hyper$rate, log=T),
       0)
@@ -83,28 +85,31 @@ propose <- function(params, sd=0.1, delta=0.005) {
   # modify probability vector
   n.var <- length(params$probs)  # note first variant parameter is constrained to 1
   params$probs <- abs(params$probs + runif(n.var, -delta, delta))
+  #params$probs <- abs(params$probs + rnorm(n.var, mean=0, sd=delta))
+  params$probs <- params$probs / sum(params$probs)  # normalize
   return(params)
 }
 
 
 
 # Metropolis-Hastings sampling
-mh <- function(data, params, hyper, max.steps, logfile=NA, skip.console=100, skip.log=100, overwrite=FALSE) {
+mh <- function(data, params, hyper, max.steps, logfile=NA, skip.console=100, skip.log=100, overwrite=FALSE, ...) {
   res <- c()
-  m <- length(params$probs) + 1  # number of variants
+  #m <- length(params$probs) + 1  # number of variants
+  m <- length(params$probs)
   
   labels <- c('step', 'posterior', 'iupm', paste0('prob', 1:m))
   if (!is.na(logfile)) {
     # prevent overwriting logfiles
     if (file.exists(logfile) & !overwrite)
       stop("To overwrite logfiles, set overwrite to TRUE.")
-    write(labels, ncolumns=3+m, sep='\t', file=logfile)
+    write(labels, ncolumns=3+m, sep='\t', file=logfile, append=T)
   }
-  
-  lpost <- ll(data, params) + lprior(params, hyper)
+  use.gamma <- !is.na(hyper$rate) & !is.na(hyper$shape)
+  lpost <- ll(data, params) + lprior(params, hyper, use.gamma)
   for (step in 0:max.steps) {
-    next.par <- propose(params)
-    next.lpost <- ll(data, next.par) + lprior(next.par, hyper)
+    next.par <- propose(params, ...)
+    next.lpost <- ll(data, next.par) + lprior(next.par, hyper, use.gamma)
     ratio <- next.lpost - lpost
     if (ratio >= 0 | runif(1) < exp(ratio)) {
       lpost <- next.lpost
@@ -116,8 +121,9 @@ mh <- function(data, params, hyper, max.steps, logfile=NA, skip.console=100, ski
       cat(step, '\t', lpost, '\t', params$iupm, '\t', params$probs, '\n')
     }
     if (step %% skip.log == 0) {
-      pv <- c(1, params$probs)
-      pv <- pv/sum(pv)
+      #pv <- c(1, params$probs)
+      #pv <- pv/sum(pv)
+      pv <- params$probs
       row <- c(step, lpost, params$iupm, pv)
       if (!is.na(logfile)) {
         write(row, ncolumns=3+m, sep='\t', file=logfile, append=T)
@@ -155,16 +161,21 @@ parse.data <- function(path, sep) {
   by.region <- split(data, data$Region)
   for (temp in by.region) {
     region <- unique(temp$Region)
-    temp$Well.number <- as.character(temp$Well.number)
-    temp2 <- temp[order(temp$Well.number, temp$Variant), ]
+    temp2 <- temp[order(temp$Well.number, temp$Variant..), ]
     
-    wells <- split(temp2$Presence.of.Variant, temp2$Well.number)
-    #ells <- t(sapply(wells, unlist))  # convert into matrix
+    wells <- split(temp2$Presence.of.variant, temp2$Well.number, drop=T)
+    wells <- t(sapply(wells, unlist))  # convert into matrix
+    if (nrow(wells) == 1) {
+      # if only one variant observed, above results in row vector
+      wells <- t(wells)
+    }
+    # sort by variant abundance
+    wells <- wells[,order(apply(wells, 2, sum), decreasing = TRUE)]
     
     cells <- lapply(split(temp2$Cells.plated, temp2$Well.number), unique)
     cells <- unlist(cells)
     
-    if (!setequal(names(wells), names(cells))) {
+    if (!all(row.names(wells) == names(cells))) {
       stop("Failed to parse well and cell data")
     }
     eval(parse(text=paste("result$", region, "<-list('data'=list('wells'=wells, 'cells'=cells))")))
