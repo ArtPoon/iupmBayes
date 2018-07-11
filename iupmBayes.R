@@ -70,7 +70,7 @@ lprior <- function(params, hyper, use.gamma=FALSE) {
   
   for (i in 1:length(params$freqs)) {
     region <- names(params$freqs)[i]
-    pv <- params$freqs[region]
+    pv <- params$freqs[[region]]
     alpha <- hyper$alpha[[region]]
     if (length(alpha) != length(pv)) {
       stop(paste("Error: length of alpha hyperparameter != variant frequency vector for", region))
@@ -99,7 +99,7 @@ propose <- function(params, sd=0.1, delta=0.005) {
 
 
 
-mh <- function(data, iupm0, hyper, max.steps, logfile=NA, skip.console=100, 
+mh <- function(data, iupm0, hyper=list(), max.steps=1e5, logfile=NA, skip.console=100, 
                skip.log=100, overwrite=FALSE) {
   # Metropolis-Hastings sampling
   #
@@ -125,6 +125,14 @@ mh <- function(data, iupm0, hyper, max.steps, logfile=NA, skip.console=100,
     nvar <- as.integer(m[i])
     params[["freqs"]][[region]] <- rep(1/nvar, nvar)
     labels <- c(labels, paste(region, 1:nvar, sep='.'))
+  }
+  
+  # use default hyperparameters if not set
+  if (length(hyper)==0) {
+    hyper <- list(shape=1, rate=1, alpha=list())
+    for (region in regions) {
+      hyper[['alpha']][[region]] <- rep(1, times=as.integer(m[region]))
+    }
   }
   
   # prepare output file
@@ -273,4 +281,5 @@ iupm.ngs <- function(variants) {
   mle <- -log(1-positives/nrow(variants))
   return(sum(mle))
 }
+
 
