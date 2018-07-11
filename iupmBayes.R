@@ -44,9 +44,8 @@ ll <- function(data, params) {
     region <- names(data)[i]
     rdat <- data[[region]]
     
-    # unpack and normalize variant frequency vector
-    var.freq <- c(1, params$freqs[[region]])
-    var.freq <- var.freq / sum(var.freq)
+    # unpack variant frequency vector
+    var.freq <- params$freqs[[region]])
     
     # for each well, apply Bernoulli distribution
     sum(sapply(1:nrow(rdat$wells), function(j) {
@@ -90,12 +89,12 @@ lprior <- function(params, hyper, use.gamma=FALSE) {
   
   for (i in 1:length(params$freqs)) {
     region <- names(params$freqs)[i]
-    pv <- c(1, params$freqs[region])
+    pv <- params$freqs[region]
     alpha <- hyper$alpha[[region]]
     if (length(alpha) != length(pv)) {
       stop(paste("Error: length of alpha hyperparameter != variant frequency vector for", region))
     }
-    res <- res + log(ddirichlet(pv/sum(pv), alpha))
+    res <- res + log(ddirichlet(pv, alpha))
   }
   return(res)
 }
@@ -109,9 +108,9 @@ propose <- function(params, sd=0.1, delta=0.005) {
   # modify probability vectors
   for (i in 1:length(params$freqs)) {
     region <- names(params$freqs)[i]
-    n.var <- length(params$freqs[[region]])  # first variant is constrained to 1
-    params$freqs[[region]] <- abs(params$freqs[[region]] + 
-                                    runif(n.var, -delta, delta))
+    n.var <- length(params$freqs[[region]])
+    temp <- abs(params$freqs[[region]] + runif(n.var, -delta, delta))
+    params$freqs[[region]] <- temp / sum(temp)  # normalize
   }
   return(params)
 }
@@ -179,11 +178,9 @@ mh <- function(data, iupm0, hyper, max.steps, logfile=NA, skip.console=100,
     if (step %% skip.log == 0) {
       row <- c(step, lpost, params$iupm)
       
-      # conversion to probability vector
+      # concatenate frequency vectors
       for (region in regions) {
-        pv <- c(1, params$freqs[[region]])
-        pv <- pv/sum(pv)
-        res <- c(res, pv)  # append to row
+        row <- c(row, params$freqs[[region]])
       }
       
       if (!is.na(logfile)) {
