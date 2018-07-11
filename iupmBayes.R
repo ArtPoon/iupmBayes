@@ -20,32 +20,27 @@ bern <- function(well, rate, probs) {
   if (sum(probs)!=1) {
     probs <- probs/sum(probs)
   }
-  pr <- exp(-rate*probs)
+  pr <- exp(-rate*probs)  # probability of count zero
   prod(ifelse(well, 1-pr, pr))
 }
+
 
 ll <- function(data, params) {
   # ll:  log-likelihood
   # @arg data: a nested list containing:
-  #     region: genomic region sequenced
-  #       wells: list of K binary vectors (rows) for presence/absence
-  #              of M variants, indexed by well label
-  #       cells: vector of length K, the number of cells in the k-th well,
-  #              indexed by well label
+  #   region: genomic region sequenced
+  #   wells: binary matrix with K rows for replicate wells with row 
+  #          names and M columns for variants
+  #   cells: named vector of length K, the number of cells in the k-th well;
+  #          names must match row names of :wells: matrix
   # @arg params: S3 object containing:
   #   iupm: IUPM
   #   probs: vector of probabilities of length M, representing the relative
   #          proportion of cells infected by each variant
-  #          The first value is fixed to 1.  All other values can vary 
-  #          from -Inf to Inf, and is transformed to a positive value by 
-  #          exp() and rescaled so that all probs sum to 1.
-
   res <- sapply(1:length(data), function(i) {
     region <- names(data)[i]
     rdat <- data[[region]]
-    
-    # unpack variant frequency vector
-    var.freq <- params$freqs[[region]])
+    var.freq <- params$freqs[[region]]
     
     # for each well, apply Bernoulli distribution
     sum(sapply(1:nrow(rdat$wells), function(j) {
@@ -59,20 +54,6 @@ ll <- function(data, params) {
 }
 
 
-iupm3.ml <- function(variants, cells, params) {
-  # maximum-likelihood estimation
-  data <- list(wells=variants, cells=cells)
-  init.p <- c(params$iupm, params$probs)
-  n <- length(init.p)
-  obj.f <- function(p) {
-    pv <- list(iupm=p[1], probs=c(p[2:(n-1)], 1-sum(p[2:(n-1)])))
-    -ll(data, pv)
-  }
-  
-  optim(par=init.p, fn=obj.f, lower=rep(1e-5,n), 
-        upper=c(1e3, rep(1,n)), method='L-BFGS-B')
-}
-
 
 lprior <- function(params, hyper, use.gamma=FALSE) {
   # lprior:  log prior
@@ -84,7 +65,7 @@ lprior <- function(params, hyper, use.gamma=FALSE) {
   #          keyed by region name
   res <- 0
   if (use.gamma) {
-    dgamma(params$iupm, shape=hyper$shape, rate=hyper$rate, log=T)
+    res <- dgamma(params$iupm, shape=hyper$shape, rate=hyper$rate, log=T)
   }
   
   for (i in 1:length(params$freqs)) {
@@ -109,6 +90,7 @@ propose <- function(params, sd=0.1, delta=0.005) {
   for (i in 1:length(params$freqs)) {
     region <- names(params$freqs)[i]
     n.var <- length(params$freqs[[region]])
+
     temp <- abs(params$freqs[[region]] + runif(n.var, -delta, delta))
     params$freqs[[region]] <- temp / sum(temp)  # normalize
   }
@@ -121,7 +103,7 @@ mh <- function(data, iupm0, hyper, max.steps, logfile=NA, skip.console=100,
                skip.log=100, overwrite=FALSE) {
   # Metropolis-Hastings sampling
   #
-  # @param data: S3 object returned by parse.data()
+  # @param data: S3 object returned by parse.data() for one participant
   # @param iupm0: initial IUPM value
   # @param hyper: nested S3 object, see lprior() above
   # @param max.steps:  number of iterations to run chain sample
@@ -130,7 +112,8 @@ mh <- function(data, iupm0, hyper, max.steps, logfile=NA, skip.console=100,
   # @param skip.log:  number of iterations between chain samples to logfile
   # @param overwrite:  if TRUE, replace contents of logfile
   res <- c()
-  m <- sapply(data, function(sub) ncol(sub$wells))  # number of variants
+  # number of variants
+  m <- lapply(data, function(sub) ncol(sub$wells))
   labels <- c('step', 'posterior', 'iupm')
   
   # initialize model parameters
@@ -139,11 +122,8 @@ mh <- function(data, iupm0, hyper, max.steps, logfile=NA, skip.console=100,
   for (i in 1:length(m)) {
     region <- names(m)[i]
     regions <- c(regions, region)
-    nvar <- m[i]
-    
-    # we reduce the number of parameters by one because the frequency
-    # vector is constrained to sum to one
-    params[["freqs"]][[region]] <- rep(1, nvar-1)
+    nvar <- as.integer(m[i])
+    params[["freqs"]][[region]] <- rep(1/nvar, nvar)
     labels <- c(labels, paste(region, 1:nvar, sep='.'))
   }
   
@@ -195,12 +175,14 @@ mh <- function(data, iupm0, hyper, max.steps, logfile=NA, skip.console=100,
 }
 
 run.example <- function() {
-  # example
-  params <- list(iupm=1.0, probs=c(1,1))  # initial values
-  hyper <- list(rate=1, shape=2, alpha=c(1,2,3))  # hyperparameters for priors
+  # initial values
+  params <- list(iupm=1.0, freqs=list(example=c(1,1)))  # initial values
+  hyper <- list(rate=1, shape=2, alpha=list(example=c(1,2,3)))  # hyperparameters for priors
   
-  data <- list(wells=matrix(c(1,0,0, 1,1,0, 1,0,1, 1,0,0), ncol=3, byrow=T), cells=rep(1e5, 4))
-  
+  data <- list(example=list(
+    wells=matrix(c(1,0,0, 1,1,0, 1,0,1, 1,0,0), ncol=3, byrow=T), 
+    cells=rep(1e5, 4)
+  ))
   mh(data, params, hyper, 1e5, 'test.log', skip.console=100, skip.log=100, overwrite=T)
   trace <- read.table('test.log', sep='\t', header=T)
 }
@@ -208,10 +190,19 @@ run.example <- function() {
 
 parse.data <- function(path, sep) {
   # Read tabular data from text file in expected format (see README.md).
-  #
   # @arg path:  Absolute or relative path to data file
   # @arg sep:   Delimiting character in tabular data
-  # Return:  a list keyed by region, containing data lists
+  # Return:  a nested list keyed by subject and region, containing data as follows:
+  #   $Participant1
+  #   $Participant1$region1
+  #   $Participant1$region1$wells
+  #       [,1] [,2] [,3]
+  #   1A     1    0    1
+  #   1B     1    0    1
+  #   1C     0    1    0
+  #   $Participant$region1$cells
+  #        1A      1B      1C
+  #   1000000 1000000 1000000
   data <- read.table(path, header=T, sep=sep, comment.char='')
   data$Participant <- as.character(data$Participant)
   
@@ -219,7 +210,7 @@ parse.data <- function(path, sep) {
   
   by.subject <- split(data, data$Participant)
   for (part in by.subject) {
-    participant <- unique(part$Participant)
+    participant <- as.character(unique(part$Participant))
     result[[participant]] <- list()
     
     by.region <- split(part, as.character(part$Region))
