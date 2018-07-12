@@ -75,7 +75,7 @@ lprior <- function(params, hyper, use.gamma=FALSE) {
     if (length(alpha) != length(pv)) {
       stop(paste("Error: length of alpha hyperparameter != variant frequency vector for", region))
     }
-    res <- res + log(ddirichlet(pv, alpha))
+    res <- res + log(ddirichlet(pv, alpha))0
   }
   return(res)
 }
@@ -99,8 +99,8 @@ propose <- function(params, sd=0.1, delta=0.005) {
 
 
 
-mh <- function(data, iupm0, hyper=list(), max.steps=1e5, logfile=NA, skip.console=100, 
-               skip.log=100, overwrite=FALSE) {
+mh <- function(data, params=list(), hyper=list(), max.steps=1e5, logfile=NA, skip.console=1000, 
+               skip.log=1000, overwrite=FALSE) {
   # Metropolis-Hastings sampling
   #
   # @param data: S3 object returned by parse.data() for one participant
@@ -114,25 +114,41 @@ mh <- function(data, iupm0, hyper=list(), max.steps=1e5, logfile=NA, skip.consol
   res <- c()
   # number of variants
   m <- lapply(data, function(sub) ncol(sub$wells))
+  regions <- names(m)
   labels <- c('step', 'posterior', 'iupm')
   
-  # initialize model parameters
-  params <- list(iupm=iupm0, freqs=list())
-  regions <- c()
-  for (i in 1:length(m)) {
-    region <- names(m)[i]
-    regions <- c(regions, region)
-    nvar <- as.integer(m[i])
-    params[["freqs"]][[region]] <- rep(1/nvar, nvar)
-    labels <- c(labels, paste(region, 1:nvar, sep='.'))
+  # check params
+  if (!is.list(params)) {
+    stop('params must be list()')
+  }
+  
+  # set default model parameters
+  if (length(params)==0) {
+    params <- list(iupm=5, freqs=list())
+    for (i in 1:length(m)) {
+      region <- names(m)[i]
+      nvar <- as.integer(m[i])
+      params[["freqs"]][[region]] <- rep(1/nvar, nvar)
+      labels <- c(labels, paste(region, 1:nvar, sep='.'))
+    }
+  } else {
+    if (!all(is.element(c('iupm', 'freqs'), names(params)))) {
+      stop('params list must have iupm and freqs entries')
+    }
   }
   
   # use default hyperparameters if not set
   if (length(hyper)==0) {
-    hyper <- list(shape=1, rate=1, alpha=list())
+    hyper <- list(alpha=list())
     for (region in regions) {
       hyper[['alpha']][[region]] <- rep(1, times=as.integer(m[region]))
     }
+    use.gamma <- FALSE
+  } else {
+    if (!all(is.element(c('shape', 'rate', 'alpha'), names(hyper)))) {
+      stop('hyper list must have shape, rate and alpha entries')
+    }
+    use.gamma <- !is.na(hyper$rate) & !is.na(hyper$shape)
   }
   
   # prepare output file
@@ -144,11 +160,11 @@ mh <- function(data, iupm0, hyper=list(), max.steps=1e5, logfile=NA, skip.consol
   }
   
   # calculate initial posterior probability
-  lpost <- ll(data, params) + lprior(params, hyper)
+  lpost <- ll(data, params) + lprior(params, hyper, use.gamma)
   
   for (step in 0:max.steps) {
     next.par <- propose(params)
-    next.lpost <- ll(data, next.par) + lprior(next.par, hyper)
+    next.lpost <- ll(data, next.par) + lprior(next.par, hyper, use.gamma)
     ratio <- next.lpost - lpost
     if (ratio >= 0 | runif(1) < exp(ratio)) {
       lpost <- next.lpost
@@ -182,18 +198,6 @@ mh <- function(data, iupm0, hyper=list(), max.steps=1e5, logfile=NA, skip.consol
   return(res)
 }
 
-run.example <- function() {
-  # initial values
-  params <- list(iupm=1.0, freqs=list(example=c(1,1)))  # initial values
-  hyper <- list(rate=1, shape=2, alpha=list(example=c(1,2,3)))  # hyperparameters for priors
-  
-  data <- list(example=list(
-    wells=matrix(c(1,0,0, 1,1,0, 1,0,1, 1,0,0), ncol=3, byrow=T), 
-    cells=rep(1e5, 4)
-  ))
-  mh(data, params, hyper, 1e5, 'test.log', skip.console=100, skip.log=100, overwrite=T)
-  trace <- read.table('test.log', sep='\t', header=T)
-}
 
 
 parse.data <- function(path, sep) {
@@ -269,8 +273,31 @@ simulate.data <- function(iupm, probs, cells) {
   }))
   
   # censor absent variants
-  as.matrix(res[,apply(res, 2, sum)>0])
+  list(wells=as.matrix(res[,apply(res, 2, sum)>0]), cells=cells)
 }
+
+
+
+run.example <- function(iupm0, iupm, shape=1, rate=1, seed=1) {
+  set.seed(seed)
+  data1 <- simulate.data(iupm=iupm, probs=c(.5,.2,.1,.1,.1), cells=rep(1e6,8))
+  data2 <- simulate.data(iupm=iupm, probs=c(.3,.1,rep(.05,12)), cells=rep(1e6,6))
+  joint.data <- list(region1=data1, region2=data2)
+  
+  # initialize parameters to random values
+  nvar1 <- ncol(data1$wells)
+  nvar2 <- ncol(data2$wells)
+  params <- list(iupm=iupm0, freqs=list(
+    region1=rdirichlet(1, rep(1, nvar1))[1,],
+    region2=rdirichlet(1, rep(1, nvar2))[1,]
+  ))
+  
+  hyper <- list(shape=shape, rate=rate, alpha=list(
+    region1=rep(1, nvar1), region2=rep(1, nvar2)
+  ))
+  mh(joint.data, params, hyper=hyper, max.steps=1e5, skip.console=1000, skip.log=100)
+}
+
 
 
 iupm.ngs <- function(variants) {
