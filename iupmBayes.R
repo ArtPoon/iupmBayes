@@ -75,7 +75,7 @@ lprior <- function(params, hyper, use.gamma=FALSE) {
     if (length(alpha) != length(pv)) {
       stop(paste("Error: length of alpha hyperparameter != variant frequency vector for", region))
     }
-    res <- res + log(ddirichlet(pv, alpha))0
+    res <- res + log(ddirichlet(pv, alpha))
   }
   return(res)
 }
@@ -230,6 +230,8 @@ parse.data <- function(path, sep) {
       region <- as.character(unique(temp$Region))
       
       temp$Well.number <- as.character(temp$Well.number)
+      temp$Variant <- as.integer(temp$Variant)
+      
       temp2 <- temp[order(temp$Well.number, temp$Variant), ]
       
       wells <- split(temp2$Presence.of.Variant, temp2$Well.number)
