@@ -236,7 +236,7 @@ parse.data <- function(path, sep) {
       
       wells <- split(temp2$Presence.of.Variant, temp2$Well.number)
       wells <- t(sapply(wells, unlist))  # convert into matrix
-      if (nrow(wells) == 1) {
+      if (nrow(wells) == 1 && is.null(row.names(wells))) {
         wells <- t(wells)
       }
       
