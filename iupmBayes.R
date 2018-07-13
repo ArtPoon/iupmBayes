@@ -98,6 +98,24 @@ propose <- function(params, sd=0.1, delta=0.005) {
 }
 
 
+make.hyper <- function(data, shape=NA, rate=NA) {
+  # convenience function for specifying hyperparameters
+  # alpha set to rep(1, times=<number of variants>)
+  hyper <- list(shape=shape, rate=rate, alpha=list())
+  if (is.na(shape) || is.na(rate)) {
+    # a broad prior centered (mode) on 1 with 95% interval 0.12-18.4
+    hyper['shape'] <- 1.
+    hyper['rate'] <- 0.2
+  }
+  for (i in 1:length(data)) {
+    region <- names(data)[i]
+    part <- data[[region]]
+    n.var <- ncol(part$wells)
+    hyper[['alpha']][[region]] <- rep(1, times=n.var)
+  }
+  return(hyper)
+}
+
 
 mh <- function(data, params=list(), hyper=list(), max.steps=1e5, logfile=NA, skip.console=1000, 
                skip.log=1000, overwrite=FALSE) {
