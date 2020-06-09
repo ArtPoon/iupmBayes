@@ -235,6 +235,9 @@ parse.data <- function(path, sep) {
   #   1000000 1000000 1000000
   data <- read.table(path, header=T, sep=sep, comment.char='')
   
+  names(data)[names(data)=="Variant.."] <- "Variant"
+  names(data)[names(data)=="Presence.of.variant"] <- "Presence.of.Variant"
+  
   # remove extra characters from column names
   #names(data) <- gsub('^\.+(.+)\.+$', "\\1", names(data))
   
