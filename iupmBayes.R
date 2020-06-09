@@ -37,9 +37,9 @@ ll <- function(data, params) {
   #   iupm: IUPM
   #   probs: vector of probabilities of length M, representing the relative
   #          proportion of cells infected by each variant
-  res <- sapply(1:length(data), function(i) {
-    region <- names(data)[i]
-    rdat <- data[[region]]
+  res <- sapply(1:length(data[[1]]), function(i) {
+    region <- names(data[[1]])[i]
+    rdat <- data[[1]][[region]]
     var.freq <- params$freqs[[region]]
     
     # for each well, apply Bernoulli distribution
@@ -131,7 +131,7 @@ mh <- function(data, params=list(), hyper=list(), max.steps=1e5, logfile=NA, ski
   # @param overwrite:  if TRUE, replace contents of logfile
   res <- c()
   # number of variants
-  m <- lapply(data, function(sub) ncol(sub$wells))
+  m <- lapply(data[[1]], function(sub) ncol(sub$wells))
   regions <- names(m)
   labels <- c('step', 'posterior', 'iupm')
   
