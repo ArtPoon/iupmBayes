@@ -1,5 +1,5 @@
 require(MCMCpack)  # for ddirichlet()
-
+require(reshape2)
 
 # likelihood function
 bern <- function(well, rate, probs) {
@@ -146,8 +146,10 @@ mh <- function(data, params=list(), hyper=list(), max.steps=1e5, logfile=NA, ski
     for (i in 1:length(m)) {
       region <- names(m)[i]
       nvar <- as.integer(m[i])
+      vars <- colnames(data[[1]][[region]][["wells"]])
       params[["freqs"]][[region]] <- rep(1/nvar, nvar)
-      labels <- c(labels, paste(region, 1:nvar, sep='.'))
+      # labels <- c(labels, paste(region, 1:nvar, sep='.'))
+      labels <- c(labels, paste(region, vars, sep='.'))
     }
   } else {
     if (!all(is.element(c('iupm', 'freqs'), names(params)))) {
@@ -259,8 +261,9 @@ parse.data <- function(path, sep) {
       
       temp2 <- temp[order(temp$Well.number, temp$Variant), ]
       
-      wells <- split(temp2$Presence.of.Variant, temp2$Well.number)
-      wells <- t(sapply(wells, unlist))  # convert into matrix
+      # wells <- split(temp2$Presence.of.Variant, temp2$Well.number)
+      # wells <- t(sapply(wells, unlist))  # convert into matrix
+      wells <- acast(temp2, Well.number~Variant, value.var = "Presence.of.Variant")
       if (nrow(wells) == 1 && is.null(row.names(wells))) {
         wells <- t(wells)
       }
